@@ -1,5 +1,6 @@
 """Run inference."""
 import argparse
+from functools import partialmethod
 import json
 import logging
 from pathlib import Path
@@ -133,6 +134,69 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     return args
 
+def get_amazon_prompt(query):
+    return f"""Your task is to determine if Product A and Product B are the same. Be critical in your judgement.
+{query}
+"""
+    return f"""Your task is to determine if Product A and Product B are the same. Here are some examples:
+
+Product A is title: adobe creative suite cs3 design standard [ mac ]. manufacturer: adobe. price: 1199.0. Product B is title: adobe cs3 
+design standard. manufacturer: . price: 1243.99. Are Product A and Product B the same? Yes
+
+Product A is title: adobe premiere pro cs3 upgrade. manufacturer: adobe. price: 299.0. Product B is title: adobe cs3 design premium. manufacturer: . price: 1865.99. Are Product A and
+Product B the same? No
+
+Product A is title: adobe dreamweaver cs3 upgrade [ mac ]. manufacturer: adobe. price: 199.0. Product B is title: adobe creative suite 3 ( cs3 ) design suite standard upgrade ( upsell )
+mac. manufacturer: . price: 859.96. Are Product A and Product B the same? No
+
+Product A is title: adobe creative suite cs3 web standard. manufacturer: adobe. price: 999.0. Product B is title: adobe creative suite 3 web standard complete package academic cd mac.
+manufacturer: . price: 369.0. Are Product A and Product B the same? No
+
+Product A is title: adobe premiere pro cs3. manufacturer: adobe. price: 799.0. Product B is title: adobe premiere pro cs3 software with encore cs3 and onlocation cs3 ( windows only )
+full version for windows. manufacturer: . price: 723.95. Are Product A and Product B the same? Yes
+
+Product A is title: adobe premiere pro cs3. manufacturer: adobe. price: 799.0. Product B is title: adobe soundbooth cs3 academic. manufacturer: . price: 95.99. Are Product A and Product
+B the same? No
+
+Product A is title: adobe soundbooth cs3 [ mac ]. manufacturer: adobe. price: 199.0. Product B is title: adobe soundbooth cs3 audio editing software mac music production software.
+manufacturer: . price: 198.95. Are Product A and Product B the same? Yes
+
+Product A is title: photoshop elements 4 mac retail eng 1u ( 19230169 ). manufacturer: adobe. price: 145.39. Product B is title: adobe photoshop elements 4.0 mac. manufacturer: . price:
+79.99. Are Product A and Product B the same? Yes
+
+Product A is title: adobe captivate 2.0. manufacturer: adobe. price: 1083.95. Product B is title: adobe captivate 2 software for windows presentation software. manufacturer: . price:
+598.95. Are Product A and Product B the same? Yes
+
+Product A is title: adobe after effects professional 7.0. manufacturer: adobe. price: 999.0. Product B is title: adobe flash cs3 professional ( mac ). manufacturer: . price: 699.0. Are
+Product A and Product B the same? No
+
+{query}"""
+
+def create_advanced_prompt(data_type, columns, query, examples=None):
+    # Add instruction
+    prompt = f"""
+        You task is to decide if two {data_type} descriptions match. 
+        The following rules regarding {data_type} features need to be observed:\n
+    """
+
+    i = 1
+    # Add rules
+    for attribute in columns:
+        prompt += f"{i}. The {attribute} of matching {data_type}s must be the same if available.\n"
+        i+=1
+
+    # prompt += f"{i}. Any other attributes of matching {data_type}s must be the same if available.\n"
+    # Add examples if enabled
+    if examples:
+        prompt += f"Here are some examples:\n {examples}"
+
+    prompt += f"Do the following two {data_type} descriptions match? Answer with 'Yes' if they do and 'No' if they do not.\n"
+
+    # Add query 
+    prompt += query
+    # prompt += " Yes or No."
+
+    return prompt
 
 def main():
     """Run main method."""
@@ -222,13 +286,61 @@ def main():
         gt = test_data["label_str"]
         preds = []
         idx = 0
+
+        beer_dt = "beer"
+        beer_attr = ["name", "brew factory name"]
+        walmart_dt = "product"
+        walmart_attr = [
+                "title", 
+                # "category", 
+                # "brand", 
+                "modelno", 
+                # "price",
+                ]
+
+        examples = """
+        Product A is title: xantech cpl10 rf ir coupler. modelno: cpl10. Product B is title: xantech cpl10 rf ir coupler. modelno: . Are A and B the Same? Yes
+
+         Product A is title: wintec filemate 4gb sdhc secure digital flash memory card. modelno: 3fmsd4gb-r. Product B is title: wintec filemate 4 gb class 4 secure digital sdhc card. modelno:
+         3fmsd4gb-r. Are A and B the Same? Yes
+
+         Product A is title: d-link dgs-1005g 5-port gigabit desktop switch. modelno: dgs1005g. Product B is title: d-link dgs-1005g 5-port gigabit desktop switch. modelno: dgs-1005g. Are A and
+         B the Same? Yes
+
+         Product A is title: apple ipod shuffle 4gb pink 4th gen. modelno: mc331ll/a. Product B is title: apple ipod shuffle 2 gb blue 4th generation newest model. modelno: mc751ll/a. Are A and
+         B the Same? No
+
+         Product A is title: gear head mp2300blk 3 button wireless optical wheel mouse - black silver. modelno: mp2300blk. Product B is title: gear head 3 button wireless optical wheel mouse blk
+         slvr usb. modelno: mp2300blk. Are A and B the Same? Yes
+
+         Product A is title: lexmark pinnacle pro901 wireless-n all-in-one printer scanner copier fax. modelno: lexmark pro901. Product B is title: lexmark pinnacle pro901 all-in-one printer.
+         modelno: 90t9105. Are A and B the Same? Yes
+
+         Product A is title: philips vibe 4gb mp3 video player. modelno: sa2vbe04kc/17. Product B is title: philips gogear vibe 8gb mp3 player sa3vbe08k 37. modelno: sa3vbe08k/37. Are A and B
+         the Same? No
+
+         Product A is title: startech 1 dvi-i analog to 2x vga video splitter cable. modelno: dvispl1vv. Product B is title: startech.com dvispl1vv 1 feet dvi-i analog to 2x vga video splitter
+         cable - m f. modelno: dvispl1vv. Are A and B the Same? Yes
+
+         Product A is title: jwin caf nites in-ear earphones pink. modelno: iep222pnk. Product B is title: jwin caf nites in-ear earphones - compact stereo - pink - iep222pnk. modelno: . Are A
+         and B the Same? Yes
+
+         Product A is title: da-lite da-plex base rear projection screen - 57 3 4 x 77 video format. modelno: 27528. Product B is title: da-lite 27658 da-glas deluxe rear projection screen - 57
+         3 4 x 77 video format. modelno: . Are A and B the Same? No
+
+         Product A is title: da-lite da-glas deluxe rear projection screen - 50 x 50 av format. modelno: 27647. Product B is title: da-lite 27636 da-glas standard rear projection screen 50 1 2 x
+         67 1 4 video format. modelno: . Are A and B the Same?
+        """
+
         # Run a few for printing -- they are cached
-        for _ in range(min(num_run, args.num_print)):
-            logger.info(prompt(queries[idx]))
+        for i in range(min(num_run, args.num_print)):
+            logger.info(f"{i}/{num_run}")
+            logger.info(prompt(get_amazon_prompt(queries[idx])))
+            # logger.info(prompt(queries[idx]))
+            # logger.info(prompt(create_advanced_prompt(beer_dt, beer_attr, queries[idx])))
             if not args.dry_run:
-                pred = manifest.run(
-                    prompt(queries[idx]), overwrite_cache=args.overwrite_cache
-                )
+                # pred = manifest.run(prompt(queries[idx]), overwrite_cache=args.overwrite_cache)
+                pred = manifest.run(prompt(get_amazon_prompt(queries[idx])), overwrite_cache=args.overwrite_cache)
             else:
                 pred = ""
             preds.append(pred)

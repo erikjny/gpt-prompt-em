@@ -38,7 +38,7 @@ MATCH_PROD_NAME = {
 
 # Dropping happens before renaming
 DATA2DROPCOLS = {
-    f"{DATASET_PATH}/entity_matching/structured/Amazon-Google": [],
+    f"{DATASET_PATH}/entity_matching/structured/Amazon-Google": ["price"],
     f"{DATASET_PATH}/entity_matching/structured/Beer": ["Style", "ABV"],
     f"{DATASET_PATH}/entity_matching/structured/DBLP-ACM": [],
     f"{DATASET_PATH}/entity_matching/structured/DBLP-GoogleScholar": [],
